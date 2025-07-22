@@ -1,0 +1,301 @@
+# --- Importations des bibliothèques nécessaires ---
+
+# Importe FastAPI pour créer l'API, APIRouter pour organiser les routes, et HTTPException pour gérer les erreurs HTTP.
+from fastapi import FastAPI, APIRouter, HTTPException
+# Importe load_dotenv pour charger les variables d'environnement à partir d'un fichier .env.
+from dotenv import load_dotenv
+# Importe CORSMiddleware pour autoriser les requêtes cross-origine (ex: depuis un navigateur web).
+from starlette.middleware.cors import CORSMiddleware
+# Importe os pour interagir avec le système d'exploitation, notamment pour les chemins de fichiers.
+import os
+# Importe logging pour enregistrer des informations, des avertissements et des erreurs.
+import logging
+# Importe re pour utiliser les expressions régulières (regex) afin de trouver des motifs dans le texte.
+import re
+# Importe Path de pathlib pour une manipulation des chemins de fichiers indépendante du système d'exploitation.
+from pathlib import Path
+# Importe BaseModel de pydantic pour définir des modèles de données (validation, sérialisation).
+from pydantic import BaseModel
+# Importe des types de données (List, Dict, Any) pour un "type hinting" plus précis.
+from typing import List, Dict, Any
+# Importe uuid pour générer des identifiants uniques (non utilisé dans ce code, mais souvent utile dans les API).
+import uuid
+# Importe datetime pour travailler avec les dates et heures (non utilisé dans ce code).
+from datetime import datetime
+
+
+# --- Configuration Initiale ---
+
+# Définit le répertoire racine du projet comme étant le dossier parent du fichier actuel.
+ROOT_DIR = Path(__file__).parent
+# Charge les variables d'environnement définies dans le fichier .env situé à la racine du projet.
+load_dotenv(ROOT_DIR / '.env')
+
+# Crée l'instance principale de l'application FastAPI avec un titre et une description.
+app = FastAPI(title="Traducteur Logique Premier Ordre", description="API pour traduire des phrases en logique de premier ordre")
+
+# Crée un routeur qui préfixera toutes ses routes avec "/api". Cela aide à organiser le projet.
+api_router = APIRouter(prefix="/api")
+
+
+# --- Définition des Modèles de Données (Pydantic) ---
+# Ces modèles définissent la structure des données attendues en entrée et en sortie de l'API.
+
+# Modèle pour les données d'entrée : une phrase à traduire.
+class SentenceInput(BaseModel):
+    sentence: str
+
+# Modèle pour le résultat de la traduction.
+class TranslationResult(BaseModel):
+    original_sentence: str      # La phrase originale soumise.
+    fol_translation: str        # La traduction en logique du premier ordre.
+    explanation: str            # Une explication de la traduction.
+    symbols_used: List[str]     # La liste des symboles logiques utilisés.
+
+# Modèle pour la liste des symboles logiques.
+class LogicalSymbols(BaseModel):
+    symbols: Dict[str, str]     # Un dictionnaire des symboles et de leur signification.
+    description: str            # Une description générale de ces symboles.
+
+# --- Logique de Traduction ---
+
+# Classe qui contient toute la logique pour traduire une phrase en logique du premier ordre.
+class FOLTranslator:
+    # Le constructeur de la classe, exécuté lors de la création d'une instance.
+    def __init__(self):
+        # Dictionnaire associant les noms des opérateurs logiques à leurs symboles unicode.
+        self.symbols = {
+            "forall": "∀",      # Pour tout (quantificateur universel)
+            "exists": "∃",      # Il existe (quantificateur existentiel)
+            "and": "∧",         # Et (conjonction)
+            "or": "∨",          # Ou (disjonction)
+            "not": "¬",         # Non (négation)
+            "implies": "→",     # Implique (implication)
+            "equivalent": "↔",  # Équivaut (équivalence)
+            "therefore": "∴",   # Donc (conclusion)
+            "because": "∵",     # Parce que (prémisse)
+        }
+
+        # Liste de "patterns" (motifs) à rechercher dans les phrases.
+        # Chaque pattern est une expression régulière associée à un modèle de traduction.
+        self.patterns = [
+            # Patterns pour la quantification universelle ("tous", "chaque").
+            {
+                "pattern": r"tous? les? (\w+) sont (\w+)", # Regex pour "tous les X sont Y" ou "tous X sont Y"
+                "template": "∀x ({predicate1}(x) → {predicate2}(x))", # Modèle de traduction
+                "explanation": "Quantification universelle : Pour tout x, si x est un {predicate1}, alors x est {predicate2}"
+            },
+            {
+                "pattern": r"tout (\w+) est (\w+)", # Regex pour "tout X est Y"
+                "template": "∀x ({predicate1}(x) → {predicate2}(x))",
+                "explanation": "Quantification universelle : Pour tout x, si x est un {predicate1}, alors x est {predicate2}"
+            },
+            {
+                "pattern": r"chaque (\w+) est (\w+)", # Regex pour "chaque X est Y"
+                "template": "∀x ({predicate1}(x) → {predicate2}(x))",
+                "explanation": "Quantification universelle : Pour chaque x, si x est un {predicate1}, alors x est {predicate2}"
+            },
+            # Patterns pour la quantification existentielle ("il existe", "certains").
+            {
+                "pattern": r"il existe un (\w+) (\w+)", # Regex pour "il existe un X Y"
+                "template": "∃x ({predicate1}(x) ∧ {predicate2}(x))",
+                "explanation": "Quantification existentielle : Il existe un x tel que x est {predicate1} et x est {predicate2}"
+            },
+            {
+                "pattern": r"il y a un (\w+) (\w+)", # Regex pour "il y a un X Y"
+                "template": "∃x ({predicate1}(x) ∧ {predicate2}(x))",
+                "explanation": "Quantification existentielle : Il existe un x tel que x est {predicate1} et x est {predicate2}"
+            },
+            {
+                "pattern": r"certains (\w+) sont (\w+)", # Regex pour "certains X sont Y"
+                "template": "∃x ({predicate1}(x) ∧ {predicate2}(x))",
+                "explanation": "Quantification existentielle : Il existe des x tels que x est {predicate1} et x est {predicate2}"
+            },
+            # Patterns pour les conditions ("si... alors...").
+            {
+                "pattern": r"si (\w+) alors (\w+)", # Regex pour "si P alors Q" (propositions simples)
+                "template": "{predicate1} → {predicate2}",
+                "explanation": "Implication logique : Si {predicate1} alors {predicate2}"
+            },
+            {
+                "pattern": r"si (\w+) est (\w+) alors il est (\w+)", # Regex pour "si X est Y alors il est Z"
+                "template": "{predicate2}({predicate1}) → {predicate3}({predicate1})",
+                "explanation": "Implication avec prédicats : Si {predicate1} est {predicate2}, alors {predicate1} est {predicate3}"
+            },
+            # Pattern pour la conjonction ("et").
+            {
+                "pattern": r"(\w+) et (\w+)",
+                "template": "{predicate1} ∧ {predicate2}",
+                "explanation": "Conjonction logique : {predicate1} et {predicate2}"
+            },
+            # Pattern pour la disjonction ("ou").
+            {
+                "pattern": r"(\w+) ou (\w+)",
+                "template": "{predicate1} ∨ {predicate2}",
+                "explanation": "Disjonction logique : {predicate1} ou {predicate2}"
+            },
+            # Patterns pour la négation ("n'est pas").
+            {
+                "pattern": r"(\w+) n'est pas (\w+)", # Regex pour "X n'est pas Y"
+                "template": "¬{predicate2}({predicate1})",
+                "explanation": "Négation : {predicate1} n'est pas {predicate2}"
+            },
+            {
+                "pattern": r"il n'y a pas de (\w+) (\w+)", # Regex pour "il n'y a pas de X Y"
+                "template": "¬∃x ({predicate1}(x) ∧ {predicate2}(x))",
+                "explanation": "Négation existentielle : Il n'existe pas de x tel que x est {predicate1} et {predicate2}"
+            },
+            # Pattern pour une affirmation simple (prédicat). C'est le dernier car il est très général.
+            {
+                "pattern": r"(\w+) est (\w+)", # Regex pour "X est Y"
+                "template": "{predicate2}({predicate1})",
+                "explanation": "Prédicat simple : {predicate1} a la propriété {predicate2}"
+            }
+        ]
+
+    # Méthode pour traduire une seule phrase.
+    def translate_sentence(self, sentence: str) -> TranslationResult:
+        # Normalise la phrase : la met en minuscules et supprime les espaces au début et à la fin.
+        sentence = sentence.lower().strip()
+        
+        # Parcourt chaque pattern défini dans la liste self.patterns.
+        for pattern_info in self.patterns:
+            # Cherche si le pattern (regex) correspond à la phrase (insensible à la casse).
+            match = re.search(pattern_info["pattern"], sentence, re.IGNORECASE)
+            # Si une correspondance est trouvée.
+            if match:
+                # Récupère les groupes capturés par la regex (les parties entre parenthèses).
+                groups = match.groups()
+                
+                # Récupère le modèle de traduction et l'explication associés au pattern.
+                template = pattern_info["template"]
+                explanation = pattern_info["explanation"]
+                
+                # Remplace les placeholders {predicate1}, {predicate2}, etc. par les mots capturés.
+                for i, group in enumerate(groups, 1): # Commence à l'index 1
+                    template = template.replace(f"{{predicate{i}}}", group)
+                    explanation = explanation.replace(f"{{predicate{i}}}", group)
+                
+                # Extrait les symboles logiques utilisés dans la traduction finale.
+                symbols_used = []
+                for symbol in self.symbols.values():
+                    if symbol in template:
+                        symbols_used.append(symbol)
+                
+                # Retourne un objet TranslationResult avec toutes les informations.
+                return TranslationResult(
+                    original_sentence=sentence,
+                    fol_translation=template,
+                    explanation=explanation,
+                    symbols_used=symbols_used
+                )
+        
+        # Si aucun pattern n'a correspondu, retourne une réponse par défaut.
+        return TranslationResult(
+            original_sentence=sentence,
+            fol_translation="[Traduction non disponible - phrase trop complexe]",
+            explanation="Cette phrase ne correspond à aucun pattern de traduction connu. Essayez des phrases plus simples comme 'Tous les hommes sont mortels' ou 'Il existe un chat noir'.",
+            symbols_used=[]
+        )
+
+# --- Initialisation et Routes de l'API ---
+
+# Crée une instance unique du traducteur pour être utilisée par l'API.
+translator = FOLTranslator()
+
+# Définit les routes (endpoints) de l'API.
+
+# Route racine ("/") pour vérifier que l'API est en ligne.
+@api_router.get("/")
+async def root():
+    return {"message": "Traducteur de Logique de Premier Ordre - API Active"}
+
+# Route pour traduire une phrase, accessible via une requête POST sur "/translate".
+# `response_model` indique à FastAPI de valider la sortie selon le modèle TranslationResult.
+@api_router.post("/translate", response_model=TranslationResult)
+async def translate_sentence(input: SentenceInput):
+    """
+    Traduit une phrase française en logique de premier ordre
+    """
+    # Vérifie si la phrase envoyée n'est pas vide.
+    if not input.sentence.strip():
+        # Si vide, lève une erreur HTTP 400 (Bad Request).
+        raise HTTPException(status_code=400, detail="La phrase ne peut pas être vide")
+    
+    # Bloc try...except pour capturer les erreurs inattendues durant la traduction.
+    try:
+        # Appelle la méthode de traduction avec la phrase reçue.
+        result = translator.translate_sentence(input.sentence)
+        # Retourne le résultat.
+        return result
+    except Exception as e:
+        # En cas d'erreur, lève une erreur HTTP 500 (Internal Server Error).
+        raise HTTPException(status_code=500, detail=f"Erreur lors de la traduction: {str(e)}")
+
+# Route pour obtenir la liste des symboles logiques, via une requête GET sur "/symbols".
+@api_router.get("/symbols", response_model=LogicalSymbols)
+async def get_logical_symbols():
+    """
+    Retourne la liste des symboles logiques disponibles
+    """
+    # Retourne un objet LogicalSymbols contenant le dictionnaire de symboles et sa description.
+    return LogicalSymbols(
+        symbols=translator.symbols,
+        description="Symboles de logique de premier ordre utilisés dans les traductions"
+    )
+
+# Route pour obtenir des exemples de phrases et leurs traductions, via GET sur "/examples".
+@api_router.get("/examples")
+async def get_examples():
+    """
+    Retourne des exemples de phrases et leurs traductions
+    """
+    # Définit une liste d'exemples en dur.
+    examples = [
+        {
+            "phrase": "Tous les hommes sont mortels",
+            "traduction": "∀x (Homme(x) → Mortel(x))",
+            "explication": "Pour tout x, si x est un homme, alors x est mortel"
+        },
+        {
+            "phrase": "Il existe un chat noir",
+            "traduction": "∃x (Chat(x) ∧ Noir(x))",
+            "explication": "Il existe un x tel que x est un chat et x est noir"
+        },
+        # ... (autres exemples)
+    ]
+    
+    # Retourne les exemples dans un dictionnaire.
+    return {"examples": examples}
+
+# --- Intégration et Lancement ---
+
+# Inclut toutes les routes définies dans `api_router` dans l'application principale.
+app.include_router(api_router)
+
+# Ajoute le middleware CORS à l'application.
+# Cela permet aux navigateurs d'autres domaines d'accéder à l'API.
+app.add_middleware(
+    CORSMiddleware,
+    allow_credentials=True, # Autorise les cookies et autres identifiants.
+    allow_origins=["*"],    # "*" autorise n'importe quel domaine (à restreindre en production).
+    allow_methods=["*"],    # Autorise toutes les méthodes HTTP (GET, POST, etc.).
+    allow_headers=["*"],    # Autorise tous les en-têtes HTTP.
+)
+
+# Configure le logging de base pour afficher les logs dans la console.
+logging.basicConfig(
+    level=logging.INFO, # Niveau de log minimum à afficher (INFO, WARNING, ERROR...).
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s' # Format des messages de log.
+)
+# Crée un logger pour le module courant.
+logger = logging.getLogger(__name__)
+
+# Ce bloc s'exécute seulement si le script est lancé directement (pas s'il est importé).
+if __name__ == "__main__":
+    # Importe uvicorn, le serveur ASGI qui fait tourner l'application FastAPI.
+    import uvicorn
+    # Lance le serveur uvicorn.
+    # host="0.0.0.0" rend le serveur accessible depuis d'autres machines sur le réseau.
+    # port=8001 définit le port d'écoute.
+    uvicorn.run(app, host="0.0.0.0", port=8001)

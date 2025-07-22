@@ -1,0 +1,58 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Traducteur de Logique de Premier Ordre</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <div class="app">
+        <div class="container">
+            <header class="header">
+                <h1 class="title">Traducteur de Logique de Premier Ordre</h1>            </header>
+            <div class="translation-section">
+                <div class="input-section">
+                    <label for="sentence" class="input-label">Entrez votre phrase à traduire :</label>
+                    <div class="input-group">
+                        <input 
+                            id="sentence" 
+                            type="text" 
+                            placeholder="Ex: Tous les hommes sont mortels"
+                            class="sentence-input"
+                        >
+                        <button id="translate-btn" class="translate-button">Traduire</button>
+                    </div>
+                    <div id="error-message" class="error-message" style="display: none;"></div>
+                </div>
+                <div id="result-section" class="result-section" style="display: none;">
+                    <h3>Résultat de la traduction</h3>
+                    <div class="result-card">
+                        <div class="result-item">
+                            <strong>Phrase originale :</strong>
+                            <div id="original-sentence" class="original-sentence"></div>
+                        </div>
+                        
+                        <div class="result-item">
+                            <strong>Traduction en logique de premier ordre :</strong>
+                            <div id="fol-translation" class="fol-translation"></div>
+                        </div>
+                        
+                        <div class="result-item">
+                            <strong>Explication :</strong>
+                            <div id="explanation" class="explanation"></div>
+                        </div>
+                        
+                        <div id="symbols-used-section" class="result-item" style="display: none;">
+                            <strong>Symboles utilisés :</strong>
+                            <div id="symbols-used" class="symbols-used"></div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="script.js"></script>
+</body>
+</html>
